@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Panel admina — MoskitoMobil</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    body{background:#fff}
+    .login-card,.admin-card{max-width:920px;margin:40px auto;background:#fff;border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow);padding:16px}
+    .tabs{display:flex;gap:10px;margin:12px 0 18px}
+    .tabs button{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}
+    .tabs button.active{background:var(--accent);color:#fff;border-color:transparent}
+    .muted{color:var(--muted)}
+    .action{display:inline-flex;gap:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div id="login" class="login-card" style="display:none;">
+      <h1>Logowanie</h1>
+      <p class="muted">Domyślne dane: <strong>login: 123</strong>, <strong>hasło: 123</strong> (zmień w ustawieniach środowiskowych).</p>
+      <form id="loginForm" class="form" style="max-width:420px">
+        <div class="field"><label for="user">Login</label><input id="user" name="user" required value="123"></div>
+        <div class="field"><label for="pass">Hasło</label><input id="pass" name="pass" type="password" required value="123"></div>
+        <button class="btn btn--primary" type="submit">Zaloguj</button>
+        <p id="loginMsg" class="form-msg"></p>
+      </form>
+    </div>
+
+    <div id="admin" class="admin-card" style="display:none;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <h1>Panel admina</h1>
+        <button id="logoutBtn" class="btn btn--ghost">Wyloguj</button>
+      </div>
+      <div class="tabs">
+        <button data-tab="tabReviews" class="active">Opinie</button>
+        <button data-tab="tabAppts">Umówione pomiary</button>
+      </div>
+
+      <section id="tabReviews">
+        <h2>Opinie</h2>
+        <table class="table" id="reviewsTable">
+          <thead><tr><th>ID</th><th>Imię</th><th>Ocena</th><th>Treść</th><th>Status</th><th>Akcje</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section id="tabAppts" style="display:none;">
+        <h2>Umówione pomiary</h2>
+        <table class="table" id="apptsTable">
+          <thead><tr><th>ID</th><th>Imię</th><th>Telefon</th><th>E-mail</th><th>Miasto</th><th>Typ</th><th>Ilość</th><th>Termin</th><th>Uwagi</th><th>Dodano</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    const $$ = (sel, root=document)=>root.querySelector(sel);
+    const $$$ = (sel, root=document)=>Array.from(root.querySelectorAll(sel));
+    const loginView = $$('#login'); const adminView = $$('#admin');
+    async function checkAuth(){
+      const r = await fetch('/api/me'); 
+      if(r.ok){ adminView.style.display='block'; loginView.style.display='none'; loadData(); }
+      else { adminView.style.display='none'; loginView.style.display='block'; }
+    }
+    checkAuth();
+
+    // Tabs
+    $$$('.tabs button').forEach(btn=>btn.addEventListener('click',()=>{
+      $$$('.tabs button').forEach(b=>b.classList.remove('active')); btn.classList.add('active');
+      $$('#tabReviews').style.display = btn.dataset.tab==='tabReviews'?'block':'none';
+      $$('#tabAppts').style.display = btn.dataset.tab==='tabAppts'?'block':'none';
+    }));
+
+    // Login
+    $$('#loginForm')?.addEventListener('submit', async (e)=>{
+      e.preventDefault();
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      const res = await fetch('/api/login', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data)});
+      const msg = $$('#loginMsg');
+      if(res.ok){ msg.textContent='Zalogowano.'; location.reload(); }
+      else{ msg.textContent='Błędny login lub hasło.'; msg.style.color='#b91c1c'; }
+    });
+
+    // Logout
+    $$('#logoutBtn')?.addEventListener('click', async ()=>{
+      await fetch('/api/logout', {method:'POST'}); location.reload();
+    });
+
+    async function loadData(){
+      await Promise.all([loadReviews(), loadAppts()]);
+    }
+
+    async function loadReviews(){
+      const res = await fetch('/api/reviews/all');
+      const tbody = $$('#reviewsTable tbody'); tbody.innerHTML='';
+      if(!res.ok){ tbody.innerHTML = '<tr><td colspan="6">Błąd pobierania.</td></tr>'; return; }
+      const items = await res.json();
+      for(const r of items){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${r.id}</td><td>${escapeHTML(r.name)}</td><td>${r.rating}</td><td>${escapeHTML(r.content)}</td>
+                        <td>${r.approved?'<span class="badge">zatwierdzona</span>':'<span class="badge">oczekuje</span>'}</td>
+                        <td class="action">
+                          <button data-a="${r.id}" data-approved="${r.approved?0:1}">${r.approved?'Cofnij':'Zatwierdź'}</button>
+                          <button data-del="${r.id}">Usuń</button>
+                        </td>`;
+        tbody.appendChild(tr);
+      }
+      // Actions
+      $$$('[data-a]').forEach(btn=>btn.addEventListener('click', async ()=>{
+        const id = btn.getAttribute('data-a'); const to = btn.getAttribute('data-approved');
+        const r = await fetch(`/api/reviews/${id}/approve`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({approved: to==='1'})});
+        if(r.ok) loadReviews();
+      }));
+      $$$('[data-del]').forEach(btn=>btn.addEventListener('click', async ()=>{
+        const id = btn.getAttribute('data-del');
+        if(confirm('Usunąć opinię #' + id + '?')){
+          const r = await fetch(`/api/reviews/${id}/delete`, {method:'DELETE'});
+          if(r.ok) loadReviews();
+        }
+      }));
+    }
+
+    async function loadAppts(){
+      const res = await fetch('/api/appointments');
+      const tbody = $$('#apptsTable tbody'); tbody.innerHTML='';
+      if(!res.ok){ tbody.innerHTML = '<tr><td colspan="10">Błąd pobierania.</td></tr>'; return; }
+      const items = await res.json();
+      for(const a of items){
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${a.id}</td><td>${escapeHTML(a.name)}</td><td>${escapeHTML(a.phone)}</td><td>${escapeHTML(a.email||'')}</td>
+                        <td>${escapeHTML(a.city)}</td><td>${escapeHTML(a.type)}</td><td>${a.qty}</td><td>${escapeHTML(a.date)}</td>
+                        <td>${escapeHTML(a.notes||'')}</td><td>${a.created_at}</td>`;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function escapeHTML(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+  </script>
+</body>
+</html>
